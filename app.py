@@ -3,151 +3,92 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import joblib
-import os
 
 app = Flask(__name__)
 
-# -----------------------------
-# Load Model
-# -----------------------------
-model_path = os.path.join(os.path.dirname(__file__), "model.sav")
-regressor = joblib.load(model_path)
+# Loading saved model
+regressor = joblib.load('model.sav')
 
-# -----------------------------
-# Load Datasets
-# -----------------------------
+# Importing the dataset
 dataset = pd.read_csv('Final_Dataset.csv')
 dataset2 = pd.read_csv('Trainset.csv')
-
 dataset2.drop('ElectricalConductivity(ds/m)', axis=1, inplace=True)
 
 X = dataset.loc[:, dataset.columns != 'Production']
-X = X.drop('Unnamed: 0', axis=1)
-
+X = X.drop('Unnamed: 0', axis=1).copy()
 y = dataset['Production']
+l = list(X.columns)
 
-columns = list(X.columns)
+first = np.array(X.loc[0])
+first = [list(first)]
 
-# -----------------------------
-# Prediction Function
-# -----------------------------
+for sk in range(len(l)):
+    first[0][sk] = 0
+
 def predict(season, crop, area, rainfall, temperature, pH, nitrogen):
+    for sk in range(len(l)):
+        first[0][sk] = 0
 
-    # fresh feature vector each time
-    features = [0] * len(columns)
+    first[0][l.index('pH')] = pH
+    first[0][l.index('Nitrogen(kg/ha)')] = nitrogen
+    first[0][l.index('Area')] = area
+    first[0][l.index('Rainfall')] = rainfall
+    first[0][l.index('Temperature')] = temperature
+    first[0][l.index(season)] = 1
+    first[0][l.index(crop)] = 1
 
-    features[columns.index('pH')] = pH
-    features[columns.index('Nitrogen(kg/ha)')] = nitrogen
-    features[columns.index('Area')] = area
-    features[columns.index('Rainfall')] = rainfall
-    features[columns.index('Temperature')] = temperature
+    gt = regressor.predict(first)
 
-    # one-hot encoding
-    if season in columns:
-        features[columns.index(season)] = 1
+    z_pred = int(gt)
 
-    if crop in columns:
-        features[columns.index(crop)] = 1
+    return z_pred
 
-    features = [features]
-
-    prediction = regressor.predict(features)
-
-    return int(prediction[0])
-
-# -----------------------------
-# Graph Generation
-# -----------------------------
 def generateGraph(season, crop, area, rainfall, temperature, pH, nitrogen):
-
     plt.close('all')
-
     df = dataset2.loc[dataset2['Season'] == season]
     crops = df['Crop'].unique()
 
-    crop_names = []
-    predictions = []
-
+    O = []
+    P = []
     for c in crops:
-
         if (c != 'Sugarcane' and c != crop and c != 'Potato') or season == 'Whole Year':
+            O.append(c)
+            P.append(predict(season, c, area, rainfall, temperature, pH, nitrogen))
+    return O, P
 
-            crop_names.append(c)
-
-            predictions.append(
-                predict(season, c, area, rainfall, temperature, pH, nitrogen)
-            )
-
-    return crop_names, predictions
-
-# -----------------------------
-# Routes
-# -----------------------------
 @app.route('/')
 def home():
     return render_template('home.html')
-
 
 @app.route('/about')
 def about():
     return render_template('about.html')
 
-
 @app.route('/predict', methods=['POST'])
 def result():
-
-    try:
-
+    if request.method == 'POST':
+        # Input
         season = request.form['season']
         crop = request.form['crop']
-
-        area_input = float(request.form['area'])
-
-        area = area_input / dataset2['Area'].max()
+        area = float(request.form['area']) / dataset2['Area'].max()
         rainfall = float(request.form['rainfall']) / dataset2['Rainfall'].max()
         temperature = float(request.form['temperature']) / dataset2['Temperature'].max()
         pH = float(request.form['pH']) / dataset2['pH'].max()
         nitrogen = float(request.form['nitrogen']) / dataset2['Nitrogen(kg/ha)'].max()
 
-        prediction = predict(season, crop, area, rainfall, temperature, pH, nitrogen)
+        z_pred = predict(season, crop, area, rainfall, temperature, pH, nitrogen)
+        z_pred = z_pred / float(request.form['area'])
 
-        if area_input == 0:
-            area_input = 1
+        O, P = generateGraph(season, crop, area, rainfall, temperature, pH, nitrogen)
 
-        prediction = prediction / area_input
+        m1, m2 = (list(t) for t in zip(*sorted(zip(P, O))))
+        if len(m1) >= 3:
+            m1 = m1[-3:]
+            m2 = m2[-3:]
 
-        crop_list, pred_list = generateGraph(
-            season,
-            crop,
-            area,
-            rainfall,
-            temperature,
-            pH,
-            nitrogen
-        )
+        print(m1, m2)
 
-        top_pred, top_crop = (list(t) for t in zip(*sorted(zip(pred_list, crop_list))))
+    return render_template('result.html', prediction=str(z_pred), crop=O, pred=P, m1=m1, m2=m2, c=crop)
 
-        if len(top_pred) >= 3:
-            top_pred = top_pred[-3:]
-            top_crop = top_crop[-3:]
-
-        return render_template(
-            'result.html',
-            prediction=str(prediction),
-            crop=crop_list,
-            pred=pred_list,
-            m1=top_pred,
-            m2=top_crop,
-            c=crop
-        )
-
-    except Exception as e:
-        return str(e)
-
-
-# -----------------------------
-# Run App
-# -----------------------------
 if __name__ == '__main__':
     app.run(debug=True)
